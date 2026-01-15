@@ -1,0 +1,13 @@
+.git
+.gitignore
+README.md
+Assets_NOT_IN_TEST
+assets
+manifest
+pipeline
+seed
+*.md
+**/__pycache__/
+**/*.pyc
+.env
+.DS_Store

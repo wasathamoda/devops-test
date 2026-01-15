@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "devops-test.fullname" . }}-mysql-seed
+data:
+  seed.sql: |
+{{ .Files.Get "seed/seed.sql" | indent 4 }}

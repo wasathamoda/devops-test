@@ -1,0 +1,105 @@
+# Global
+nameOverride: ""
+fullnameOverride: ""
+
+# Web application
+web:
+  replicaCount: 2
+
+  image:
+    repository: devops-test-web
+    tag: "local"
+    pullPolicy: IfNotPresent
+
+  containerPort: 8080
+
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8080
+
+  env:
+    MYSQL_HOST: "mysql"
+    MYSQL_DATABASE: "targets"
+    MYSQL_USER: "targets"
+    MYSQL_PASSWORD: "password"
+    ID: "1234"
+
+  resources: {}
+  # Example:
+  # resources:
+  #   requests:
+  #     cpu: 50m
+  #     memory: 128Mi
+  #   limits:
+  #     cpu: 200m
+  #     memory: 256Mi
+
+  readinessProbe:
+    enabled: true
+    path: /
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 6
+
+  livenessProbe:
+    enabled: true
+    path: /
+    initialDelaySeconds: 20
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+
+# MySQL
+mysql:
+  image:
+    repository: mysql
+    tag: "8.0"
+    pullPolicy: IfNotPresent
+
+  service:
+    port: 3306
+
+  auth:
+    rootPassword: "rootpassword"
+    database: "targets"
+    username: "targets"
+    password: "password"
+
+  persistence:
+    enabled: true
+    accessModes:
+      - ReadWriteOnce
+    size: 1Gi
+
+  resources: {}
+
+  probes:
+    enabled: true
+    startup:
+      initialDelaySeconds: 10
+      periodSeconds: 5
+      timeoutSeconds: 2
+      failureThreshold: 30
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 2
+      failureThreshold: 6
+    liveness:
+      initialDelaySeconds: 20
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+
+# Ingress
+ingress:
+  enabled: true
+  className: "nginx"
+  host: "target.example.com"
+  path: /
+  pathType: Prefix
+  tls:
+    enabled: false
+    secretName: ""
