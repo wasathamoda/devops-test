@@ -16,7 +16,6 @@ stages:
 
 variables:
   IMAGE_TAG: $CI_COMMIT_SHORT_SHA
-  # In real GitLab this is already the full registry path for the project image
   IMAGE: $CI_REGISTRY_IMAGE
 
 ###
@@ -32,7 +31,6 @@ docker-build:
   script:
     - docker version
 
-    # Assignment-safe: build always; push only if registry creds exist
     - |
       if [ -z "${CI_REGISTRY_PASSWORD}" ] || [ -z "${CI_REGISTRY_USER}" ] || [ -z "${CI_REGISTRY}" ] || [ -z "${CI_REGISTRY_IMAGE}" ]; then
         echo "Registry variables not set -> skipping docker login/push (assignment mode)."
@@ -90,10 +88,6 @@ helm-deploy-dryrun:
     entrypoint: [""]
   script:
     - helm version
-
-    # Assignment-safe fallback:
-    # - In real GitLab: use pushed image ($IMAGE:$IMAGE_TAG)
-    # - In assignment mode: use local/minikube tag (devops-test-web:local)
     - |
       if [ -z "${CI_REGISTRY_IMAGE}" ]; then
         echo "CI_REGISTRY_IMAGE not set -> using local image devops-test-web:local (assignment mode)."
@@ -121,8 +115,6 @@ helm-deploy:
     entrypoint: [""]
   script:
     - helm version
-
-    # Skip safely if kube access not provided (assignment mode)
     - |
       if [ -z "${KUBECONFIG_BASE64}" ]; then
         echo "KUBECONFIG_BASE64 not set -> skipping real deploy (assignment mode)."
@@ -132,8 +124,6 @@ helm-deploy:
 
     - mkdir -p ~/.kube
     - echo "$KUBECONFIG_BASE64" | base64 -d > ~/.kube/config
-
-    # Choose image like we did in dry-run
     - |
       if [ -z "${CI_REGISTRY_IMAGE}" ]; then
         echo "CI_REGISTRY_IMAGE not set -> using local image devops-test-web:local."
@@ -149,8 +139,6 @@ helm-deploy:
         -n devops-test --create-namespace \
         --set web.image.repository="$DEPLOY_IMAGE_REPO" \
         --set web.image.tag="$DEPLOY_IMAGE_TAG"
-
-    # Wait for rollout
     - kubectl -n devops-test rollout status deploy/devops-test-web
   rules:
     - if: $CI_COMMIT_BRANCH
@@ -173,13 +161,10 @@ prod-smoke-test:
 
     - mkdir -p ~/.kube
     - echo "$KUBECONFIG_BASE64" | base64 -d > ~/.kube/config
-
-    # Example checks (would run in real CI)
     - kubectl get ns
     - kubectl -n devops-test get deploy,svc,ingress
     - kubectl -n devops-test rollout status deploy/devops-test-web
 
-    # Example app check from inside cluster
     - kubectl run -n devops-test curl --image=curlimages/curl:8.5.0 --rm --restart=Never -- \
         curl -sS -o /dev/null -w "HTTP=%{http_code}\n" http://devops-test-web/
   rules:
