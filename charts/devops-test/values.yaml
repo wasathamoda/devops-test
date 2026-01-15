@@ -25,15 +25,13 @@ web:
     MYSQL_PASSWORD: "password"
     ID: "1234"
 
-  resources: {}
-  # Example:
-  # resources:
-  #   requests:
-  #     cpu: 50m
-  #     memory: 128Mi
-  #   limits:
-  #     cpu: 200m
-  #     memory: 256Mi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
 
   readinessProbe:
     enabled: true

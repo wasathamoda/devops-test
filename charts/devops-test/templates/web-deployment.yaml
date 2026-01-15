@@ -23,6 +23,10 @@ spec:
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
+
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+
           {{- if .Values.web.readinessProbe.enabled }}
           readinessProbe:
             httpGet:

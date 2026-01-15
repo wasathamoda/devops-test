@@ -1,29 +1,188 @@
+# NOTE:
+# This CI/CD pipeline is designed for demonstration purposes.
+# It shows how a Kubernetes + Helm deployment pipeline would be structured.
+#
+# CI_REGISTRY, CI_REGISTRY_IMAGE, CI_REGISTRY_USER, CI_REGISTRY_PASSWORD
+# are expected to be provided by GitLab in a real project.
+# For this assignment, jobs are illustrative and may not run end-to-end.
+
 image: docker:latest
+
 stages:
   - build
   - test
   - deploy
   - prodtest
 
+variables:
+  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+  # In real GitLab this is already the full registry path for the project image
+  IMAGE: $CI_REGISTRY_IMAGE
 
 ###
+# Build Docker image
+docker-build:
+  stage: build
+  image: docker:latest
+  services:
+    - name: docker:dind
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_DRIVER: overlay2
+  script:
+    - docker version
+
+    # Assignment-safe: build always; push only if registry creds exist
+    - |
+      if [ -z "${CI_REGISTRY_PASSWORD}" ] || [ -z "${CI_REGISTRY_USER}" ] || [ -z "${CI_REGISTRY}" ] || [ -z "${CI_REGISTRY_IMAGE}" ]; then
+        echo "Registry variables not set -> skipping docker login/push (assignment mode)."
+        docker build -t "$IMAGE:$IMAGE_TAG" .
+        exit 0
+      fi
+
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker build -t "$IMAGE:$IMAGE_TAG" .
+    - docker push "$IMAGE:$IMAGE_TAG"
+  rules:
+    - if: $CI_COMMIT_BRANCH
+
+###
+# SonarQube analysis
 sonarqube-check:
   stage: test
   image:
     name: sonarsource/sonar-scanner-cli:latest
     entrypoint: [""]
   variables:
-    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"  # Defines the location of the analysis task cache
-    GIT_DEPTH: "0"  # Tells git to fetch all the branches of the project, required by the analysis task
+    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
+    GIT_DEPTH: "0"
   cache:
     key: "${CI_JOB_NAME}"
     paths:
       - .sonar/cache
   script:
-    - sonar-scanner -Dsonar.projectKey=$CI_PROJECT_NAME 
+    - sonar-scanner -Dsonar.projectKey=$CI_PROJECT_NAME
   allow_failure: true
   only:
     - merge_requests
     - master
-    - develop  
+    - develop
 
+###
+# Helm validation
+helm-validate:
+  stage: test
+  image:
+    name: alpine/helm:3.14.4
+    entrypoint: [""]
+  script:
+    - helm version
+    - helm lint charts/devops-test
+    - helm template devops-test charts/devops-test -n devops-test > /tmp/rendered.yaml
+    - test -s /tmp/rendered.yaml
+  rules:
+    - if: $CI_COMMIT_BRANCH
+
+helm-deploy-dryrun:
+  stage: deploy
+  image:
+    name: alpine/helm:3.14.4
+    entrypoint: [""]
+  script:
+    - helm version
+
+    # Assignment-safe fallback:
+    # - In real GitLab: use pushed image ($IMAGE:$IMAGE_TAG)
+    # - In assignment mode: use local/minikube tag (devops-test-web:local)
+    - |
+      if [ -z "${CI_REGISTRY_IMAGE}" ]; then
+        echo "CI_REGISTRY_IMAGE not set -> using local image devops-test-web:local (assignment mode)."
+        export DEPLOY_IMAGE_REPO="devops-test-web"
+        export DEPLOY_IMAGE_TAG="local"
+      else
+        export DEPLOY_IMAGE_REPO="$IMAGE"
+        export DEPLOY_IMAGE_TAG="$IMAGE_TAG"
+      fi
+
+    - helm upgrade --install devops-test charts/devops-test \
+        -n devops-test --create-namespace \
+        --set web.image.repository="$DEPLOY_IMAGE_REPO" \
+        --set web.image.tag="$DEPLOY_IMAGE_TAG" \
+        --dry-run --debug
+  rules:
+    - if: $CI_COMMIT_BRANCH
+  needs:
+    - docker-build
+
+helm-deploy:
+  stage: deploy
+  image:
+    name: alpine/helm:3.14.4
+    entrypoint: [""]
+  script:
+    - helm version
+
+    # Skip safely if kube access not provided (assignment mode)
+    - |
+      if [ -z "${KUBECONFIG_BASE64}" ]; then
+        echo "KUBECONFIG_BASE64 not set -> skipping real deploy (assignment mode)."
+        echo "In a real pipeline, this job would apply to the cluster."
+        exit 0
+      fi
+
+    - mkdir -p ~/.kube
+    - echo "$KUBECONFIG_BASE64" | base64 -d > ~/.kube/config
+
+    # Choose image like we did in dry-run
+    - |
+      if [ -z "${CI_REGISTRY_IMAGE}" ]; then
+        echo "CI_REGISTRY_IMAGE not set -> using local image devops-test-web:local."
+        export DEPLOY_IMAGE_REPO="devops-test-web"
+        export DEPLOY_IMAGE_TAG="local"
+      else
+        export DEPLOY_IMAGE_REPO="$IMAGE"
+        export DEPLOY_IMAGE_TAG="$IMAGE_TAG"
+      fi
+
+    # Real apply (no --dry-run)
+    - helm upgrade --install devops-test charts/devops-test \
+        -n devops-test --create-namespace \
+        --set web.image.repository="$DEPLOY_IMAGE_REPO" \
+        --set web.image.tag="$DEPLOY_IMAGE_TAG"
+
+    # Wait for rollout
+    - kubectl -n devops-test rollout status deploy/devops-test-web
+  rules:
+    - if: $CI_COMMIT_BRANCH
+  needs:
+    - helm-deploy-dryrun
+  when: manual
+
+prod-smoke-test:
+  stage: prodtest
+  image:
+    name: bitnami/kubectl:1.29
+    entrypoint: [""]
+  script:
+    - |
+      if [ -z "${KUBECONFIG_BASE64}" ]; then
+        echo "KUBECONFIG_BASE64 not set -> skipping smoke test (assignment mode)."
+        echo "If this were a real pipeline, we'd set kubeconfig as a masked CI variable."
+        exit 0
+      fi
+
+    - mkdir -p ~/.kube
+    - echo "$KUBECONFIG_BASE64" | base64 -d > ~/.kube/config
+
+    # Example checks (would run in real CI)
+    - kubectl get ns
+    - kubectl -n devops-test get deploy,svc,ingress
+    - kubectl -n devops-test rollout status deploy/devops-test-web
+
+    # Example app check from inside cluster
+    - kubectl run -n devops-test curl --image=curlimages/curl:8.5.0 --rm --restart=Never -- \
+        curl -sS -o /dev/null -w "HTTP=%{http_code}\n" http://devops-test-web/
+  rules:
+    - if: $CI_COMMIT_BRANCH
+  needs:
+    - helm-deploy
