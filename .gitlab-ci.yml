@@ -134,7 +134,6 @@ helm-deploy:
         export DEPLOY_IMAGE_TAG="$IMAGE_TAG"
       fi
 
-    # Real apply (no --dry-run)
     - helm upgrade --install devops-test charts/devops-test \
         -n devops-test --create-namespace \
         --set web.image.repository="$DEPLOY_IMAGE_REPO" \
